@@ -21,10 +21,11 @@ import {
   LayoutTemplate,
   Loader2,
 } from "lucide-react";
-import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
+import { extractVariables } from "@/lib/whatsapp/template-validators";
 
 export interface TemplateSendValues {
-  body: string[];
+  // Now uses a dictionary to support both named and positional variables
+  body: Record<string, string>;
   headerText?: string;
   buttonParams?: Record<number, string>;
 }
@@ -35,11 +36,11 @@ interface TemplatePickerProps {
   onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
 }
 
-function renderBodyPreview(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1;
-    const value = params[idx];
-    return value && value.trim().length > 0 ? value : `{{${raw}}}`;
+// Updated to replace both positional {{1}} and named {{customer_name}} variables
+function renderBodyPreview(body: string, params: Record<string, string>): string {
+  return body.replace(/\{\{([a-z_]+|\d+)\}\}/g, (_, varName) => {
+    const value = params[varName];
+    return value && value.trim().length > 0 ? value : `{{${varName}}}`;
   });
 }
 
@@ -47,6 +48,7 @@ interface UrlButtonSlot {
   index: number;
   text: string;
   url: string;
+  urlVar: string;
 }
 
 /**
@@ -55,22 +57,28 @@ interface UrlButtonSlot {
  * send-message path doesn't 400 on missing parameters.
  */
 function collectVariableSlots(template: MessageTemplate): {
-  bodyVars: number[];
-  headerVarCount: number;
+  bodyVars: string[];
+  headerVar: string | null;
   urlButtonSlots: UrlButtonSlot[];
 } {
-  const bodyVars = extractVariableIndices(template.body_text);
-  const headerVarCount =
+  const bodyVars = extractVariables(template.body_text || "");
+  
+  const headerVars =
     template.header_type === "text" && template.header_content
-      ? extractVariableIndices(template.header_content).length
-      : 0;
+      ? extractVariables(template.header_content)
+      : [];
+  const headerVar = headerVars.length > 0 ? headerVars[0] : null;
+
   const urlButtonSlots: UrlButtonSlot[] = [];
   (template.buttons ?? []).forEach((b, i) => {
-    if (b.type === "URL" && extractVariableIndices(b.url).length > 0) {
-      urlButtonSlots.push({ index: i, text: b.text, url: b.url });
+    if (b.type === "URL" && b.url) {
+      const vars = extractVariables(b.url);
+      if (vars.length > 0) {
+        urlButtonSlots.push({ index: i, text: b.text, url: b.url, urlVar: vars[0] });
+      }
     }
   });
-  return { bodyVars, headerVarCount, urlButtonSlots };
+  return { bodyVars, headerVar, urlButtonSlots };
 }
 
 export function TemplatePicker({
@@ -81,7 +89,9 @@ export function TemplatePicker({
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
-  const [params, setParams] = useState<string[]>([]);
+  
+  // Params is now a dictionary mapping variable names to their values
+  const [params, setParams] = useState<Record<string, string>>({});
   const [headerText, setHeaderText] = useState<string>("");
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
 
@@ -131,7 +141,7 @@ export function TemplatePicker({
 
   function resetSelection() {
     setSelected(null);
-    setParams([]);
+    setParams({});
     setHeaderText("");
     setButtonParams({});
   }
@@ -145,15 +155,24 @@ export function TemplatePicker({
     const slots = collectVariableSlots(template);
     const noInputsNeeded =
       slots.bodyVars.length === 0 &&
-      slots.headerVarCount === 0 &&
+      slots.headerVar === null &&
       slots.urlButtonSlots.length === 0;
+      
     if (noInputsNeeded) {
-      onSelect(template, { body: [] });
+      onSelect(template, { body: {} });
       handleOpenChange(false);
       return;
     }
+    
     setSelected(template);
-    setParams(new Array(slots.bodyVars.length).fill(""));
+    
+    // Initialize state dictionary with empty strings for all extracted variables
+    const initialParams: Record<string, string> = {};
+    slots.bodyVars.forEach((v) => {
+      initialParams[v] = "";
+    });
+    setParams(initialParams);
+    
     setHeaderText("");
     setButtonParams({});
   }
@@ -175,11 +194,12 @@ export function TemplatePicker({
     () => (selected ? collectVariableSlots(selected) : null),
     [selected],
   );
+  
   const canConfirm =
     !!selected &&
     !!slots &&
-    slots.bodyVars.every((_, i) => (params[i] ?? "").trim().length > 0) &&
-    (slots.headerVarCount === 0 || headerText.trim().length > 0) &&
+    slots.bodyVars.every((v) => (params[v] ?? "").trim().length > 0) &&
+    (!slots.headerVar || headerText.trim().length > 0) &&
     slots.urlButtonSlots.every(
       (s) => (buttonParams[s.index] ?? "").trim().length > 0,
     );
@@ -259,10 +279,10 @@ export function TemplatePicker({
                 </p>
               )}
             </div>
-            {slots && slots.headerVarCount > 0 && (
+            {slots && slots.headerVar && (
               <div className="space-y-1">
                 <Label className="text-xs text-popover-foreground">
-                  {`Header {{1}}`}
+                  {`Header {{${slots.headerVar}}}`}
                 </Label>
                 <Input
                   value={headerText}
@@ -272,15 +292,16 @@ export function TemplatePicker({
                 />
               </div>
             )}
-            {slots?.bodyVars.map((v, i) => (
+            {slots?.bodyVars.map((v) => (
               <div key={v} className="space-y-1">
                 <Label className="text-xs text-popover-foreground">{`Body {{${v}}}`}</Label>
                 <Input
-                  value={params[i] ?? ""}
+                  value={params[v] ?? ""}
                   onChange={(e) => {
-                    const next = [...params];
-                    next[i] = e.target.value;
-                    setParams(next);
+                    setParams((prev) => ({
+                      ...prev,
+                      [v]: e.target.value,
+                    }));
                   }}
                   placeholder={`Value for {{${v}}}`}
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
@@ -290,7 +311,7 @@ export function TemplatePicker({
             {slots?.urlButtonSlots.map((slot) => (
               <div key={slot.index} className="space-y-1">
                 <Label className="text-xs text-popover-foreground">
-                  {`URL button "${slot.text}" — value for `}{`{{1}}`}
+                  {`URL button "${slot.text}" — value for `}{`{{${slot.urlVar}}}`}
                 </Label>
                 <Input
                   value={buttonParams[slot.index] ?? ""}
@@ -304,7 +325,7 @@ export function TemplatePicker({
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
                 <p className="text-[10px] text-muted-foreground break-all">
-                  Final URL: {slot.url.replace(/\{\{1\}\}/g, buttonParams[slot.index] || "{{1}}")}
+                  Final URL: {slot.url.replace(new RegExp(`\\{\\{${slot.urlVar}\\}\\}`, 'g'), buttonParams[slot.index] || `{{${slot.urlVar}}}`)}
                 </p>
               </div>
             ))}

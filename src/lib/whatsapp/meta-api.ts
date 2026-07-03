@@ -9,7 +9,7 @@
  * instead of a runtime rejection from Meta.
  */
 
-const META_API_VERSION = 'v21.0'
+const META_API_VERSION = 'v25.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
 
 export interface MetaSendResult {
@@ -525,6 +525,7 @@ export async function uploadResumableMedia(
 // ============================================================
 
 import type { MetaTemplateSubmitPayload } from './template-components'
+import console from 'node:console'
 
 export interface SubmitMessageTemplateArgs {
   wabaId: string
@@ -564,8 +565,10 @@ export async function submitMessageTemplate(
     },
     body: JSON.stringify(payload),
   })
+  console.log('submitMessageTemplate', { wabaId, payload, status: response.status })
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
+    console.error('submitMessageTemplate failed', { wabaId, payload, status: response.status })
   }
   const data = await response.json()
   if (!data?.id) {

@@ -20,10 +20,18 @@ export interface MetaComponent {
   buttons?: MetaButtonPayload[];
   example?: {
     header_text?: string[];
+
     header_url?: string[];
+
     header_handle?: string[];
+
     body_text?: string[][];
-  };
+
+    body_text_named_params?: {
+        param_name: string;
+        example: string;
+    }[];
+};
 }
 
 interface MetaButtonPayload {
@@ -71,13 +79,42 @@ function buildBodyComponent(payload: TemplatePayload): MetaComponent {
     type: 'BODY',
     text: payload.body_text,
   };
-  const bodySample = payload.sample_values?.body;
-  if (bodySample && bodySample.length > 0) {
-    // Meta expects body_text as a 2D array — outer is "examples",
-    // inner is the values for each variable. We submit a single
-    // example row.
-    component.example = { body_text: [bodySample] };
-  }
+  const bodySample =
+payload.sample_values?.body;
+
+if (Array.isArray(bodySample)) {
+
+    if (bodySample.length > 0) {
+
+        component.example = {
+
+            body_text: [bodySample]
+
+        };
+
+    }
+
+} else if (bodySample) {
+
+    component.example = {
+
+        body_text_named_params:
+
+            Object.entries(bodySample).map(
+
+                ([name, value]) => ({
+
+                    param_name: name,
+
+                    example: value
+
+                })
+
+            )
+
+    };
+
+}
   return component;
 }
 
@@ -118,6 +155,7 @@ export interface MetaTemplateSubmitPayload {
   name: string;
   category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
   language: string;
+  parameter_format?: 'POSITIONAL' | 'NAMED';
   components: MetaComponent[];
 }
 
@@ -150,6 +188,10 @@ export function buildMetaTemplatePayload(
     name: payload.name,
     category: CATEGORY_TO_META[payload.category],
     language: payload.language,
+    parameter_format:
+        payload.parameter_format === 'NAMED'
+            ? 'NAMED'
+            : 'POSITIONAL',
     components,
   };
 }

@@ -272,7 +272,8 @@ export type TemplateButton =
   | { type: 'COPY_CODE'; text: string; example: string };
 
 export interface TemplateSampleValues {
-  body?: string[];
+  // Allow both standard positional arrays and named variable dictionaries
+  body?: string[] | Record<string, string>;
   header?: string[];
 }
 
@@ -290,6 +291,7 @@ export interface MessageTemplate {
   footer_text?: string;
   buttons?: TemplateButton[];
   sample_values?: TemplateSampleValues;
+  parameter_format?: 'POSITIONAL' | 'NAMED';
   status?: MessageTemplateStatus;
   meta_template_id?: string;
   rejection_reason?: string;

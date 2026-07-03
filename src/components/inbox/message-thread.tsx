@@ -55,10 +55,17 @@ interface ReplyDraft {
   preview: string;
 }
 
-function renderTemplateBody(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1;
-    return params[idx] ?? `{{${raw}}}`;
+function renderTemplateBody(
+  body: string,
+  params: string[] | Record<string, string>,
+) {
+  return body.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, key) => {
+    if (Array.isArray(params)) {
+      const index = Number(key) - 1;
+      return params[index] ?? `{{${key}}}`;
+    }
+
+    return params[key] ?? `{{${key}}}`;
   });
 }
 
@@ -584,7 +591,7 @@ export function MessageThread({
     async (
       template: MessageTemplate,
       values: {
-        body: string[];
+        body: string[] | Record<string, string>;
         headerText?: string;
         buttonParams?: Record<number, string>;
       },
@@ -624,7 +631,10 @@ export function MessageThread({
               headerText: values.headerText,
               buttonParams: values.buttonParams,
             },
-            template_params: values.body,
+            template_params:
+    Array.isArray(values.body)
+        ? values.body
+        : Object.values(values.body),
             content_text: renderedBody,
           }),
         });

@@ -17,7 +17,7 @@ import type { TemplateButton, TemplateSampleValues } from '@/types'
  * they remain visible so the user can notice drift and clean up.
  */
 
-const META_API_VERSION = 'v21.0'
+const META_API_VERSION = 'v25.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
 
 interface MetaButton {
@@ -37,6 +37,8 @@ interface MetaTemplateComponent {
     header_text?: string[]
     header_handle?: string[]
     body_text?: string[][]
+    // Meta includes this when parameter_format is 'NAMED'
+    body_text_named_params?: Array<{ param_name: string; example: string }>
   }
 }
 
@@ -46,6 +48,7 @@ interface MetaTemplate {
   language: string
   status: string
   category: string
+  parameter_format?: string
   components?: MetaTemplateComponent[]
   quality_score?: { score?: string } | string
 }
@@ -111,14 +114,32 @@ function extractSampleValues(
   body: MetaTemplateComponent | undefined,
   header: MetaTemplateComponent | undefined,
 ): TemplateSampleValues | null {
-  // Meta returns body_text as a 2D array — one row per example set.
-  // We take the first row (most templates have exactly one).
-  const bodySample = body?.example?.body_text?.[0]
+  // Handle positional arrays (e.g. ["Pablo", "860198-230332"])
+  const positionalBody = body?.example?.body_text?.[0]
+  
+  // Handle named parameter objects from Meta API
+  const namedBody = body?.example?.body_text_named_params
+
+  // Dynamically type this so JSONB saves it as either an Array or an Object
+  let bodySample: string[] | Record<string, string> | undefined
+
+  if (namedBody && namedBody.length > 0) {
+    bodySample = {}
+    for (const item of namedBody) {
+      bodySample[item.param_name] = item.example
+    }
+  } else if (positionalBody && positionalBody.length > 0) {
+    bodySample = positionalBody
+  }
+
   const headerSample = header?.example?.header_text
-  if (!bodySample?.length && !headerSample?.length) return null
+  
+  if (!bodySample && !headerSample?.length) return null
+  
   const sv: TemplateSampleValues = {}
-  if (bodySample?.length) sv.body = bodySample
+  if (bodySample) sv.body = bodySample
   if (headerSample?.length) sv.header = headerSample
+  
   return sv
 }
 
@@ -179,9 +200,11 @@ export async function POST() {
     const accessToken = decrypt(config.access_token)
 
     const metaTemplates: MetaTemplate[] = []
+    
+    // Added 'parameter_format' to the requested fields from Meta
     let nextUrl:
       | string
-      | null = `${META_API_BASE}/${config.waba_id}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`
+      | null = `${META_API_BASE}/${config.waba_id}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score,parameter_format`
     const PAGE_CAP = 20
     let pageCount = 0
 

@@ -42,6 +42,9 @@ export interface TemplatePayload {
   header_content?: string;
   header_media_url?: string;
   header_handle?: string;
+  parameter_format?:
+        'POSITIONAL'
+        | 'NAMED';
   body_text: string;
   footer_text?: string;
   buttons?: TemplateButton[];
@@ -58,45 +61,70 @@ export function validateTemplateName(name: string): void {
 }
 
 /**
- * Extract sorted, deduplicated {{N}} indices from a string. Returns
- * `[1, 2, 4]` for `"Hi {{1}} {{2}}, item {{4}}"`.
+ * Extract sorted, deduplicated variables from a string.
+ * Works for both Positional: `[1, 2, 4]` and Named: `['customer_name']`.
  */
-export function extractVariableIndices(text: string): number[] {
-  const matches = text.matchAll(/\{\{(\d+)\}\}/g);
-  const set = new Set<number>();
+export function extractVariables(text: string): string[] {
+  // Matches digits (positional) or lowercase/underscores (named)
+  const matches = text.matchAll(/\{\{([a-z_]+|\d+)\}\}/g);
+  const set = new Set<string>();
   for (const m of matches) {
-    const n = Number(m[1]);
-    if (Number.isFinite(n) && n >= 1) set.add(n);
+    set.add(m[1]);
   }
-  return [...set].sort((a, b) => a - b);
+  
+  // Sort numeric variables properly, leave named variables as is
+  return [...set].sort((a, b) => {
+    const numA = Number(a);
+    const numB = Number(b);
+    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+    return a.localeCompare(b);
+  });
 }
 
+// Alias for backward compatibility with prior imports that expect 'extractVariableIndices'
+export const extractVariableIndices = extractVariables as any;
+
 /**
- * Meta requires contiguous, 1-indexed variables. `{{1}} {{3}}` is
- * invalid — it must be `{{1}} {{2}}`.
+ * Meta requires positional variables to be contiguous (1, 2, 3).
+ * Named variables just need to follow the lowercase/underscore regex.
+ * A template cannot mix format types.
  */
-function assertContiguous(indices: number[], where: string): void {
-  for (let i = 0; i < indices.length; i++) {
-    if (indices[i] !== i + 1) {
-      throw new Error(
-        `${where} variables must be contiguous starting at {{1}} — found ${indices
-          .map((n) => `{{${n}}}`)
-          .join(', ')}.`,
-      );
+function assertValidVariables(variables: string[], where: string): void {
+  if (variables.length === 0) return;
+
+  const isPositional = variables.every((v) => /^\d+$/.test(v));
+  const isNamed = variables.every((v) => /^[a-z_]+$/.test(v));
+
+  if (!isPositional && !isNamed) {
+    throw new Error(
+      `${where} variables must be exclusively positional (e.g., {{1}}, {{2}}) or exclusively named (e.g., {{first_name}}) — cannot mix formats.`,
+    );
+  }
+
+  if (isPositional) {
+    const nums = variables.map(Number).sort((a, b) => a - b);
+    for (let i = 0; i < nums.length; i++) {
+      if (nums[i] !== i + 1) {
+        throw new Error(
+          `${where} variables must be contiguous starting at {{1}} — found ${nums
+            .map((n) => `{{${n}}}`)
+            .join(', ')}.`,
+        );
+      }
     }
   }
 }
 
-export function validateBody(bodyText: string): number[] {
+export function validateBody(bodyText: string): string[] {
   if (!bodyText.trim()) throw new Error('Body text is required.');
   if (bodyText.length > TEMPLATE_LIMITS.bodyMaxLength) {
     throw new Error(
       `Body text exceeds ${TEMPLATE_LIMITS.bodyMaxLength} chars (got ${bodyText.length}).`,
     );
   }
-  const indices = extractVariableIndices(bodyText);
-  assertContiguous(indices, 'Body');
-  return indices;
+  const variables = extractVariables(bodyText);
+  assertValidVariables(variables, 'Body');
+  return variables;
 }
 
 export function validateFooter(footerText: string | undefined): void {
@@ -106,13 +134,13 @@ export function validateFooter(footerText: string | undefined): void {
       `Footer text exceeds ${TEMPLATE_LIMITS.footerMaxLength} chars (got ${footerText.length}).`,
     );
   }
-  if (extractVariableIndices(footerText).length > 0) {
+  if (extractVariables(footerText).length > 0) {
     throw new Error('Footer text cannot contain {{N}} variables (Meta rule).');
   }
 }
 
 export interface HeaderValidationResult {
-  /** number of {{N}} placeholders in a TEXT header — 0 or 1. */
+  /** number of placeholders in a TEXT header — 0 or 1. */
   variableCount: number;
 }
 
@@ -134,16 +162,20 @@ export function validateHeader(
         `Header text exceeds ${TEMPLATE_LIMITS.headerTextMaxLength} chars (got ${header_content.length}).`,
       );
     }
-    const indices = extractVariableIndices(header_content);
-    if (indices.length > 1) {
+    
+    const variables = extractVariables(header_content);
+    if (variables.length > 1) {
       throw new Error(
-        `Text header supports at most one variable — found ${indices.length} (Meta rule).`,
+        `Text header supports at most one variable — found ${variables.length} (Meta rule).`,
       );
     }
-    if (indices.length === 1 && indices[0] !== 1) {
-      throw new Error('Text header variable must be {{1}} (Meta rule).');
+    if (variables.length === 1) {
+      const v = variables[0];
+      if (v !== '1' && !/^[a-z_]+$/.test(v)) {
+        throw new Error('Text header variable must be {{1}} or a valid named variable (lowercase letters and underscores).');
+      }
     }
-    return { variableCount: indices.length };
+    return { variableCount: variables.length };
   }
 
   // image / video / document need either a public URL or a Resumable
@@ -240,21 +272,23 @@ export function validateButtons(buttons: TemplateButton[] | undefined): void {
         } catch {
           throw new Error(`URL button #${i + 1} has an invalid url.`);
         }
-        const urlVars = extractVariableIndices(b.url);
+        
+        const urlVars = extractVariables(b.url);
         if (urlVars.length > 1) {
           throw new Error(
             `URL button #${i + 1} can have at most one variable (Meta rule).`,
           );
         }
         if (urlVars.length === 1) {
-          if (urlVars[0] !== 1) {
+          const v = urlVars[0];
+          if (v !== '1' && !/^[a-z_]+$/.test(v)) {
             throw new Error(
-              `URL button #${i + 1} variable must be {{1}} (Meta rule).`,
+              `URL button #${i + 1} variable must be {{1}} or a valid named variable.`,
             );
           }
           if (!b.example?.trim()) {
             throw new Error(
-              `URL button #${i + 1} uses {{1}} — Meta requires an example value.`,
+              `URL button #${i + 1} uses a variable — Meta requires an example value.`,
             );
           }
         }
@@ -288,29 +322,51 @@ export function validateSampleValues(
   headerVarCount: number,
 ): void {
   const samples = payload.sample_values ?? {};
-  const body = samples.body ?? [];
-  const header = samples.header ?? [];
+  
+  // Safely extract length and values whether passed as an Array (positional) or Dictionary (named)
+  const getSampleValues = (val: any): string[] => {
+    if (Array.isArray(val)) return val.map(String);
+    if (val && typeof val === 'object') return Object.values(val).map(String);
+    return [];
+  };
 
-  if (body.length !== bodyVarCount) {
+  const bodySamples = getSampleValues(samples.body);
+  const headerSamples = getSampleValues(samples.header);
+
+  if (bodySamples.length !== bodyVarCount) {
     throw new Error(
-      `Body has ${bodyVarCount} variable(s) — supply exactly ${bodyVarCount} sample value(s) (got ${body.length}).`,
+      `Body has ${bodyVarCount} variable(s) — supply exactly ${bodyVarCount} sample value(s) (got ${bodySamples.length}).`,
     );
   }
-  if (header.length !== headerVarCount) {
+  if (headerSamples.length !== headerVarCount) {
     throw new Error(
-      `Header has ${headerVarCount} variable(s) — supply exactly ${headerVarCount} sample value(s) (got ${header.length}).`,
+      `Header has ${headerVarCount} variable(s) — supply exactly ${headerVarCount} sample value(s) (got ${headerSamples.length}).`,
     );
   }
-  for (let i = 0; i < body.length; i++) {
-    if (!body[i] || !body[i].trim()) {
-      throw new Error(`Body sample value #${i + 1} is empty.`);
+  
+  for (let i = 0; i < bodySamples.length; i++) {
+    if (!bodySamples[i] || !bodySamples[i].trim()) {
+      throw new Error(`Body sample value is missing or empty.`);
     }
   }
-  for (let i = 0; i < header.length; i++) {
-    if (!header[i] || !header[i].trim()) {
-      throw new Error(`Header sample value #${i + 1} is empty.`);
+  for (let i = 0; i < headerSamples.length; i++) {
+    if (!headerSamples[i] || !headerSamples[i].trim()) {
+      throw new Error(`Header sample value is missing or empty.`);
     }
   }
+}
+export function extractNamedVariables(text: string): string[] {
+  const regex = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+
+  const vars: string[] = [];
+
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    vars.push(match[1]);
+  }
+
+  return [...new Set(vars)];
 }
 
 /**
@@ -331,6 +387,7 @@ export function validateTemplatePayload(payload: TemplatePayload): {
   const headerResult = validateHeader(payload);
   validateButtons(payload.buttons);
   validateSampleValues(payload, bodyVars.length, headerResult.variableCount);
+  
   return {
     bodyVarCount: bodyVars.length,
     headerVarCount: headerResult.variableCount,

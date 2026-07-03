@@ -49,6 +49,7 @@ import type {
 import { templateStatusConfig } from '@/lib/template-status';
 import {
   extractVariableIndices,
+  extractNamedVariables,
   TEMPLATE_LIMITS,
 } from '@/lib/whatsapp/template-validators';
 
@@ -72,6 +73,8 @@ interface TemplateFormData {
   header_sample: string;
   body_text: string;
   body_samples: string[];
+body_named_samples: Record<string, string>;
+parameter_format: 'POSITIONAL' | 'NAMED';
   footer_text: string;
   buttons: TemplateButton[];
 }
@@ -85,7 +88,9 @@ const emptyForm: TemplateFormData = {
   header_media_url: '',
   header_sample: '',
   body_text: '',
+  parameter_format: 'POSITIONAL',
   body_samples: [],
+  body_named_samples: {},
   footer_text: '',
   buttons: [],
 };
@@ -152,10 +157,18 @@ export function TemplateManager() {
   // Body variable indices — `[1, 2, 3]` for "{{1}} {{2}} {{3}}". We
   // re-run the extractor on every render to keep the sample-value rows
   // in sync with what the user typed.
-  const bodyVarCount = useMemo(
-    () => extractVariableIndices(form.body_text).length,
-    [form.body_text],
-  );
+  const bodyVariables = useMemo(() => {
+    if (form.parameter_format === 'NAMED') {
+        return extractNamedVariables(form.body_text);
+    }
+
+    return extractVariableIndices(form.body_text);
+}, [
+    form.body_text,
+    form.parameter_format,
+]);
+const bodyVarCount = bodyVariables.length;
+
   const headerVarCount = useMemo(
     () =>
       form.header_format === 'text'
@@ -205,9 +218,16 @@ export function TemplateManager() {
 
   function buildSubmitPayload() {
     const sample_values: TemplateSampleValues = {};
-    if (form.body_samples.some((v) => v.trim())) {
-      sample_values.body = form.body_samples.map((v) => v.trim());
-    }
+
+if (form.parameter_format === 'POSITIONAL') {
+  if (form.body_samples.some(v => v.trim())) {
+    sample_values.body =
+      form.body_samples.map(v => v.trim());
+  }
+} else {
+  sample_values.body =
+    form.body_named_samples;
+}
     if (form.header_format === 'text' && form.header_sample.trim()) {
       sample_values.header = [form.header_sample.trim()];
     }
@@ -242,7 +262,20 @@ export function TemplateManager() {
       header_media_url: template.header_media_url ?? '',
       header_sample: template.sample_values?.header?.[0] ?? '',
       body_text: template.body_text,
-      body_samples: template.sample_values?.body ?? [],
+      body_samples: Array.isArray(template.sample_values?.body)
+  ? template.sample_values.body
+  : [],
+
+body_named_samples:
+  !Array.isArray(template.sample_values?.body) &&
+  template.sample_values?.body
+    ? template.sample_values.body
+    : {},
+
+parameter_format:
+  template.parameter_format === 'NAMED'
+    ? 'NAMED'
+    : 'POSITIONAL',
       footer_text: template.footer_text ?? '',
       buttons: template.buttons ?? [],
     });
@@ -810,6 +843,8 @@ export function TemplateManager() {
                         type="file"
                         accept="image/jpeg,image/png"
                         className="hidden"
+                        title="Upload header image"
+                        aria-label="Upload header image"
                         onChange={(e) => {
                           const f = e.target.files?.[0];
                           if (f) void handleHeaderImageFile(f);
