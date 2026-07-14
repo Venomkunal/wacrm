@@ -214,6 +214,13 @@ export async function POST() {
         headers: { Authorization: `Bearer ${accessToken}` },
       })
 
+      if (process.env.NODE_ENV === 'development') {
+  const clonedRes = metaRes.clone(); // Clone so you don't consume the stream
+  const debugBody = await clonedRes.json();
+  console.log('--- META API RAW RESPONSE ---');
+  console.log(JSON.stringify(debugBody, null, 2));
+}
+
       if (!metaRes.ok) {
         let metaErr = `Meta API error: ${metaRes.status}`
         try {

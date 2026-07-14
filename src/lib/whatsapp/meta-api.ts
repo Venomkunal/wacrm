@@ -525,7 +525,7 @@ export async function uploadResumableMedia(
 // ============================================================
 
 import type { MetaTemplateSubmitPayload } from './template-components'
-import console from 'node:console'
+// import console from 'node:console'
 
 export interface SubmitMessageTemplateArgs {
   wabaId: string
