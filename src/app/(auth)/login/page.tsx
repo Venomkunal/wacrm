@@ -74,7 +74,11 @@ function LoginPageInner() {
             {inviteToken ? (
               <UsersRound className="h-6 w-6 text-primary" />
             ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
+              <img 
+                          src="/logo.svg" 
+                                      alt="Shinelink Logo" 
+                                                  className="h-5 w-5 object-contain"
+                                                            />
             )}
           </div>
           <CardTitle className="text-xl text-foreground">
