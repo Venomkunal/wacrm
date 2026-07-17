@@ -41,6 +41,7 @@ export interface TemplatePayload {
   header_type?: MessageTemplate['header_type'];
   header_content?: string;
   header_media_url?: string;
+  header_media_id?: string
   header_handle?: string;
   parameter_format?:
         'POSITIONAL'

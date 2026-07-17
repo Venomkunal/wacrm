@@ -40,6 +40,7 @@ function buildUpsertRow(
     language: payload.language,
     header_type: payload.header_type ?? null,
     header_content: payload.header_content ?? null,
+    header_media_id: payload.header_media_id ?? null,
     header_media_url: payload.header_media_url ?? null,
     header_handle: payload.header_handle ?? null,
     body_text: payload.body_text,

@@ -209,6 +209,7 @@ export interface Message {
   status: MessageStatus;
   created_at: string;
   reply_to_message_id?: string;
+  
   /**
    * Only set when `content_type === 'interactive'` — the stable id of
    * the button or list row the customer tapped. The Flows engine uses
@@ -285,8 +286,8 @@ export interface MessageTemplate {
   language?: string;
   header_type?: 'text' | 'image' | 'video' | 'document';
   header_content?: string;
-  header_handle?: string;
-  header_media_url?: string;
+header_media_url?: string | null;
+header_media_id?: string | null;
   body_text: string;
   footer_text?: string;
   buttons?: TemplateButton[];

@@ -520,6 +520,71 @@ export async function uploadResumableMedia(
   return { handle: uploadData.h }
 }
 
+// Add this near your other Media functions in meta-api.ts
+
+export interface UploadMediaArgs {
+  phoneNumberId: string
+  accessToken: string
+  /** The File object extracted from FormData */
+  file: File
+}
+
+/**
+ * Upload a standard media file (image, video, document) to WhatsApp.
+ * Returns the media_id used for sending messages or templates.
+ */
+export async function uploadMedia(
+  args: UploadMediaArgs
+): Promise<{ id: string }> {
+  const { phoneNumberId, accessToken, file } = args
+  const url = `${META_API_BASE}/${phoneNumberId}/media`
+
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('type', file.type)
+  formData.append('messaging_product', 'whatsapp')
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: formData,
+  })
+
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+
+  const data = await response.json()
+  return { id: data.id }
+}
+
+export interface DeleteMediaArgs {
+  mediaId: string
+  accessToken: string
+}
+
+/**
+ * Delete a previously uploaded media object from WhatsApp.
+ */
+export async function deleteMedia(
+  args: DeleteMediaArgs
+): Promise<void> {
+  const { mediaId, accessToken } = args
+  const url = `${META_API_BASE}/${mediaId}`
+  
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
+
 // ============================================================
 // Template submission (Business Management API)
 // ============================================================

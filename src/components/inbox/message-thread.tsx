@@ -594,6 +594,8 @@ export function MessageThread({
         body: string[] | Record<string, string>;
         headerText?: string;
         buttonParams?: Record<number, string>;
+        headerMediaUrl?: string; 
+                headerMediaId?: string;
       },
     ) => {
       if (!conversation) return;
@@ -608,10 +610,12 @@ export function MessageThread({
         content_type: "template",
         content_text: renderedBody,
         template_name: template.name,
+        media_url: values.headerMediaUrl || values.headerMediaId,
         status: "sending",
         created_at: new Date().toISOString(),
       };
       onNewMessage(optimisticMsg);
+      setTemplateModalOpen(false);
 
       try {
         const res = await fetch("/api/whatsapp/send", {
@@ -622,6 +626,7 @@ export function MessageThread({
             message_type: "template",
             template_name: template.name,
             template_language: template.language,
+            media_url: values.headerMediaUrl || values.headerMediaId,
             // Structured params drive the new send-builder path
             // (header media + URL button substitution). Body values
             // are mirrored under both shapes so the route can fall
@@ -630,11 +635,13 @@ export function MessageThread({
               body: values.body,
               headerText: values.headerText,
               buttonParams: values.buttonParams,
+              headerMediaUrl: values.headerMediaUrl,
+              headerMediaId: values.headerMediaId,
             },
             template_params:
-    Array.isArray(values.body)
-        ? values.body
-        : Object.values(values.body),
+              Array.isArray(values.body)
+                ? values.body
+                : Object.values(values.body),
             content_text: renderedBody,
           }),
         });

@@ -46,6 +46,10 @@ interface WhatsAppMessage {
   sticker?: { id: string; mime_type: string }
   location?: { latitude: number; longitude: number; name?: string; address?: string }
   reaction?: { message_id: string; emoji: string }
+  button?: {
+  text: string
+  payload: string
+}
   /**
    * Set when the customer taps a button or list row on an interactive
    * message we sent. `button_reply.id` / `list_reply.id` is whatever id
@@ -186,6 +190,7 @@ export async function POST(request: Request) {
   let body: { entry?: WhatsAppWebhookEntry[] }
   try {
     body = JSON.parse(rawBody)
+    console.log("WEBHOOK RECEIVED");
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
@@ -216,6 +221,8 @@ export async function POST(request: Request) {
 }
 
 async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
+  console.log("processWebhook called");
+console.log(JSON.stringify(body, null, 2));
   if (!body.entry) return
 
   for (const entry of body.entry) {
@@ -241,6 +248,9 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           await handleStatusUpdate(status)
         }
       }
+      console.log("Change field:", change.field);
+console.log("Messages:", value.messages);
+console.log("Contacts:", value.contacts);
 
       // Handle incoming messages
       if (!value.messages || !value.contacts) continue
@@ -288,6 +298,10 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
       for (let i = 0; i < value.messages.length; i++) {
         const message = value.messages[i]
+        console.log(
+  "RAW MESSAGE:",
+  JSON.stringify(message, null, 2)
+);
         const contact = value.contacts[i] || value.contacts[0]
 
         await processMessage(
@@ -570,6 +584,10 @@ async function processMessage(
   configOwnerUserId: string,
   accessToken: string
 ) {
+  console.log("========== INBOUND MESSAGE ==========");
+console.log("TYPE:", message.type);
+console.log(JSON.stringify(message, null, 2));
+console.log("====================================");
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
 
@@ -612,8 +630,13 @@ async function processMessage(
   }
 
   // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
+  const { contentText, mediaUrl, mediaType, interactiveReplyId, } =
     await parseMessageContent(message, accessToken)
+    console.log(
+  "Message Type:",
+  message.type,
+  JSON.stringify(message, null, 2)
+);
 
   // Resolve swipe-reply context if present. A missing parent is fine —
   // we just store NULL and the UI renders the message without a quote.
@@ -649,12 +672,14 @@ async function processMessage(
     'text', 'image', 'document', 'audio', 'video',
     'location', 'template', 'interactive',
   ])
-  const contentType = ALLOWED_CONTENT_TYPES.has(message.type)
-    ? message.type
-    : message.type === 'sticker'
-      ? 'image'   // stickers are images
-      : 'text'    // reaction, unknown → text fallback
-
+  const contentType =
+  message.type === 'button'
+    ? 'interactive'
+    : ALLOWED_CONTENT_TYPES.has(message.type)
+      ? message.type
+      : message.type === 'sticker'
+        ? 'image'
+        : 'text'
   // Determine whether this is the contact's very first inbound message
   // BEFORE we insert, so the count is accurate. Covers the case where
   // the contact row already exists (manual add / CSV import) but they've
@@ -920,6 +945,8 @@ async function parseMessageContent(
       }
       return empty
 
+    
+
     case 'location':
       if (message.location) {
         const loc = message.location
@@ -932,6 +959,14 @@ async function parseMessageContent(
 
     case 'reaction':
       return { ...empty, contentText: message.reaction?.emoji || null }
+      case 'button':
+  return {
+    ...empty,
+    contentText: message.button?.text ?? null,
+    interactiveReplyId: message.button?.payload ?? null,
+  }
+
+  
 
     case 'interactive': {
       // The customer tapped a reply button or a list row on a message

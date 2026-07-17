@@ -78,7 +78,7 @@ function buildHeaderComponent(
       `${headerType} header requires a media link or id at send time — set header_media_url on the template or pass headerMediaUrl/headerMediaId.`,
     );
   }
-  const mediaPayload: { link?: string; id?: string } = id ? { id } : { link };
+  const mediaPayload: { link?: string; id?: string } = id ? { id } : { link: link ?? undefined };
   return {
     type: 'header',
     parameters: [

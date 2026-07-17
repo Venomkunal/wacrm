@@ -213,6 +213,8 @@ function MessageContent({ message }: { message: Message }) {
         </div>
       );
 
+      
+
     case "interactive": {
       // Customer tapped a reply button or list row on a message the bot
       // sent. We show the tapped option's title (already in content_text,

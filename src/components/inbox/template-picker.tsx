@@ -1,11 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState} from "react";
+
 import { createClient } from "@/lib/supabase/client";
+
 import type { MessageTemplate } from "@/types";
+
+import MediaUploadDialog, {
+  type UploadResult,
+} from "@/components/whatsapp/MediaUploadDialog";
+
+import {
+  uploadToStorage,
+  uploadToMeta,
+} from "@/lib/whatsapp/media-upload";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
 import {
   Dialog,
   DialogContent,
@@ -14,71 +27,127 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+
 import { Badge } from "@/components/ui/badge";
+
 import {
   ArrowLeft,
   ChevronRight,
   LayoutTemplate,
   Loader2,
+  Image as ImageIcon,
+  Video,
+  FileText,
+  Upload,
 } from "lucide-react";
+
 import { extractVariables } from "@/lib/whatsapp/template-validators";
 
 export interface TemplateSendValues {
-  // Now uses a dictionary to support both named and positional variables
   body: Record<string, string>;
+
   headerText?: string;
+
+  headerMediaUrl?: string;
+
+  headerMediaId?: string;
+
   buttonParams?: Record<number, string>;
 }
 
 interface TemplatePickerProps {
   open: boolean;
+
   onOpenChange: (open: boolean) => void;
-  onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
+
+  onSelect: (
+    template: MessageTemplate,
+    values: TemplateSendValues,
+  ) => void;
 }
 
-// Updated to replace both positional {{1}} and named {{customer_name}} variables
-function renderBodyPreview(body: string, params: Record<string, string>): string {
-  return body.replace(/\{\{([a-z_]+|\d+)\}\}/g, (_, varName) => {
-    const value = params[varName];
-    return value && value.trim().length > 0 ? value : `{{${varName}}}`;
-  });
+function renderBodyPreview(
+  body: string,
+  params: Record<string, string>,
+): string {
+  return body.replace(
+    /\{\{([a-z_]+|\d+)\}\}/g,
+    (_, name) => {
+      const value = params[name];
+
+      return value?.trim()
+        ? value
+        : `{{${name}}}`;
+    },
+  );
 }
 
 interface UrlButtonSlot {
   index: number;
+
   text: string;
+
   url: string;
+
   urlVar: string;
 }
 
-/**
- * Templates may need values for: body variables, a text-header
- * variable, and per-URL-button suffixes. Collect them all so the
- * send-message path doesn't 400 on missing parameters.
- */
-function collectVariableSlots(template: MessageTemplate): {
+function collectVariableSlots(
+  template: MessageTemplate,
+): {
   bodyVars: string[];
+
   headerVar: string | null;
+
   urlButtonSlots: UrlButtonSlot[];
 } {
-  const bodyVars = extractVariables(template.body_text || "");
-  
-  const headerVars =
-    template.header_type === "text" && template.header_content
-      ? extractVariables(template.header_content)
-      : [];
-  const headerVar = headerVars.length > 0 ? headerVars[0] : null;
+  const bodyVars = extractVariables(
+    template.body_text || "",
+  );
 
-  const urlButtonSlots: UrlButtonSlot[] = [];
-  (template.buttons ?? []).forEach((b, i) => {
-    if (b.type === "URL" && b.url) {
-      const vars = extractVariables(b.url);
-      if (vars.length > 0) {
-        urlButtonSlots.push({ index: i, text: b.text, url: b.url, urlVar: vars[0] });
+  const headerVars =
+    template.header_type === "text" &&
+    template.header_content
+      ? extractVariables(
+          template.header_content,
+        )
+      : [];
+
+  const headerVar =
+    headerVars.length > 0
+      ? headerVars[0]
+      : null;
+
+  const urlButtonSlots: UrlButtonSlot[] =
+    [];
+
+  (template.buttons ?? []).forEach(
+    (button, index) => {
+      if (
+        button.type === "URL" &&
+        button.url
+      ) {
+        const vars = extractVariables(
+          button.url,
+        );
+
+        if (vars.length > 0) {
+          urlButtonSlots.push({
+            index,
+            text: button.text,
+            url: button.url,
+            urlVar: vars[0],
+          });
+        }
       }
-    }
-  });
-  return { bodyVars, headerVar, urlButtonSlots };
+    },
+  );
+
+  return {
+    bodyVars,
+    headerVar,
+    urlButtonSlots,
+  };
 }
 
 export function TemplatePicker({
@@ -86,51 +155,102 @@ export function TemplatePicker({
   onOpenChange,
   onSelect,
 }: TemplatePickerProps) {
-  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<MessageTemplate | null>(null);
-  
-  // Params is now a dictionary mapping variable names to their values
-  const [params, setParams] = useState<Record<string, string>>({});
-  const [headerText, setHeaderText] = useState<string>("");
-  const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
+  const [templates, setTemplates] =
+    useState<MessageTemplate[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [selected, setSelected] =
+    useState<MessageTemplate | null>(
+      null,
+    );
+
+  const [params, setParams] =
+    useState<Record<string, string>>(
+      {},
+    );
+
+  const [headerText, setHeaderText] =
+    useState("");
+
+  const [buttonParams, setButtonParams] =
+    useState<Record<number, string>>(
+      {},
+    );
+
+  const [accountId, setAccountId] =
+    useState("");
+
+  const [headerMediaUrl, setHeaderMediaUrl] =
+    useState("");
+
+  const [headerMediaId, setHeaderMediaId] =
+    useState("");
+
+  const [
+    mediaDialogOpen,
+    setMediaDialogOpen,
+  ] = useState(false);
 
   useEffect(() => {
     if (!open) return;
 
     let cancelled = false;
+
     (async () => {
       setLoading(true);
-      const supabase = createClient();
+
+      const supabase =
+        createClient();
+
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } =
+        await supabase.auth.getUser();
 
       if (!user) {
-        if (!cancelled) {
-          setTemplates([]);
-          setLoading(false);
-        }
+        setTemplates([]);
+        setLoading(false);
         return;
       }
 
-      // Scope by RLS (message_templates_select → is_account_member), NOT by
-      // user_id. Templates are account-owned, so filtering on the caller's
-      // user_id hid templates that a teammate created — leaving them unable
-      // to send approved templates in a shared account.
-      const { data, error } = await supabase
+      const { data: profile } =
+        await supabase
+          .from("profiles")
+          .select("account_id")
+          .eq("user_id", user.id)
+          .single();
+
+      if (profile?.account_id) {
+        setAccountId(
+          profile.account_id,
+        );
+      }
+
+      const {
+        data,
+        error,
+      } = await supabase
         .from("message_templates")
         .select("*")
         .eq("status", "APPROVED")
-        .order("created_at", { ascending: false });
+        .order("created_at", {
+          ascending: false,
+        });
 
       if (cancelled) return;
+
       if (error) {
-        console.error("Failed to fetch templates:", error);
+        console.error(error);
         setTemplates([]);
       } else {
-        setTemplates((data as MessageTemplate[]) ?? []);
+        setTemplates(
+          (data as MessageTemplate[]) ??
+            [],
+        );
       }
+
       setLoading(false);
     })();
 
@@ -138,100 +258,231 @@ export function TemplatePicker({
       cancelled = true;
     };
   }, [open]);
-
   function resetSelection() {
-    setSelected(null);
-    setParams({});
-    setHeaderText("");
-    setButtonParams({});
+  setSelected(null);
+
+  setParams({});
+
+  setHeaderText("");
+
+  setButtonParams({});
+
+  setHeaderMediaUrl("");
+
+  setHeaderMediaId("");
+
+  setMediaDialogOpen(false);
+}
+
+function handleOpenChange(next: boolean) {
+  if (!next) {
+    resetSelection();
   }
 
-  function handleOpenChange(next: boolean) {
-    if (!next) resetSelection();
-    onOpenChange(next);
-  }
+  onOpenChange(next);
+}
 
-  function pickTemplate(template: MessageTemplate) {
-    const slots = collectVariableSlots(template);
-    const noInputsNeeded =
-      slots.bodyVars.length === 0 &&
-      slots.headerVar === null &&
-      slots.urlButtonSlots.length === 0;
-      
-    if (noInputsNeeded) {
-      onSelect(template, { body: {} });
-      handleOpenChange(false);
-      return;
-    }
-    
-    setSelected(template);
-    
-    // Initialize state dictionary with empty strings for all extracted variables
-    const initialParams: Record<string, string> = {};
-    slots.bodyVars.forEach((v) => {
-      initialParams[v] = "";
+function pickTemplate(template: MessageTemplate) {
+  const slots = collectVariableSlots(template);
+
+  const noInputsNeeded =
+    slots.bodyVars.length === 0 &&
+    slots.headerVar === null &&
+    slots.urlButtonSlots.length === 0 &&
+    template.header_type !== "image" &&
+    template.header_type !== "video" &&
+    template.header_type !== "document";
+
+  if (noInputsNeeded) {
+    onSelect(template, {
+      body: {},
     });
-    setParams(initialParams);
-    
-    setHeaderText("");
-    setButtonParams({});
-  }
 
-  function confirm() {
-    if (!selected) return;
-    const values: TemplateSendValues = { body: params };
-    if (headerText.trim()) values.headerText = headerText.trim();
-    if (Object.keys(buttonParams).length > 0) {
-      values.buttonParams = Object.fromEntries(
-        Object.entries(buttonParams).map(([k, v]) => [Number(k), v.trim()]),
-      );
-    }
-    onSelect(selected, values);
     handleOpenChange(false);
+
+    return;
   }
 
-  const slots = useMemo(
-    () => (selected ? collectVariableSlots(selected) : null),
-    [selected],
-  );
-  
-  const canConfirm =
-    !!selected &&
-    !!slots &&
-    slots.bodyVars.every((v) => (params[v] ?? "").trim().length > 0) &&
-    (!slots.headerVar || headerText.trim().length > 0) &&
-    slots.urlButtonSlots.every(
-      (s) => (buttonParams[s.index] ?? "").trim().length > 0,
+  setSelected(template);
+  setHeaderMediaUrl(template.header_media_url ?? "");
+setHeaderMediaId(template.header_media_id ?? "");
+
+  const values: Record<string, string> = {};
+
+  slots.bodyVars.forEach((v) => {
+    values[v] = "";
+  });
+
+  setParams(values);
+
+  setHeaderText("");
+
+  setButtonParams({});
+
+}
+
+async function handleUploadToStorage(
+  file: File,
+) {
+  const result =
+    await uploadToStorage(
+      file,
+      accountId,
     );
 
+  return result.publicUrl;
+}
+async function handleMediaComplete(
+  result: UploadResult,
+) {
+  if (result.headerMediaUrl) {
+    setHeaderMediaUrl(result.headerMediaUrl);
+  }
+
+  if (result.headerMediaId) {
+    setHeaderMediaId(result.headerMediaId);
+  }
+
+  if (!selected) return;
+
+  const supabase = createClient();
+
+  const { error } = await supabase
+    .from("message_templates")
+    .update({
+      header_media_url:
+        result.headerMediaUrl ?? null,
+      header_media_id:
+        result.headerMediaId ?? null,
+    })
+    .eq("id", selected.id);
+
+  if (error) {
+    console.error(error);
+    throw error;
+  }
+}
+async function handleUploadToMeta(file: File) {
+  const result = await uploadToMeta(file);
+  return result.mediaId;
+}
+
+function confirm() {
+  if (!selected) return;
+
+  const values: TemplateSendValues = {
+    body: params,
+  };
+
+  if (headerText.trim()) {
+    values.headerText =
+      headerText.trim();
+  }
+
+  if (headerMediaUrl) {
+    values.headerMediaUrl =
+      headerMediaUrl;
+  }
+
+  if (headerMediaId) {
+    values.headerMediaId =
+      headerMediaId;
+  }
+
+  if (
+    Object.keys(buttonParams).length >
+    0
+  ) {
+    values.buttonParams =
+      Object.fromEntries(
+        Object.entries(
+          buttonParams,
+        ).map(([k, v]) => [
+          Number(k),
+          v.trim(),
+        ]),
+      );
+  }
+
+  onSelect(selected, values);
+
+  handleOpenChange(false);
+}
+
+const slots = useMemo(
+  () =>
+    selected
+      ? collectVariableSlots(
+          selected,
+        )
+      : null,
+  [selected],
+);
+
+const requiresMedia =
+  !!selected &&
+  (
+    selected.header_type ===
+      "image" ||
+    selected.header_type ===
+      "video" ||
+    selected.header_type ===
+      "document"
+  );
+
+const canConfirm =
+  !!selected &&
+  !!slots &&
+  slots.bodyVars.every(
+    (v) =>
+      (params[v] ?? "")
+        .trim()
+        .length > 0,
+  ) &&
+  (!slots.headerVar ||
+    headerText.trim().length >
+      0) &&
+  slots.urlButtonSlots.every(
+    (slot) =>
+      (
+        buttonParams[
+          slot.index
+        ] ?? ""
+      )
+        .trim()
+        .length > 0,
+  ) &&
+  (
+    !requiresMedia ||
+    !!headerMediaId ||
+    !!headerMediaUrl
+  );
   return (
+  <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="border-border bg-popover sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-popover-foreground">
+          <DialogTitle className="flex items-center gap-2">
             <LayoutTemplate className="h-4 w-4 text-primary" />
             {selected ? selected.name : "Send template"}
           </DialogTitle>
-          <DialogDescription className="text-muted-foreground">
+
+          <DialogDescription>
             {selected
-              ? "Fill in the placeholders to render this template. Meta requires every variable to be set."
-              : "Pick an approved WhatsApp template to send to this contact."}
+              ? "Fill the required variables before sending."
+              : "Choose an approved WhatsApp template."}
           </DialogDescription>
         </DialogHeader>
 
         {!selected ? (
           <div className="max-h-[60vh] space-y-2 overflow-y-auto">
             {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin" />
               </div>
             ) : templates.length === 0 ? (
-              <div className="rounded-md border border-border bg-background/50 p-6 text-center">
-                <p className="text-sm text-popover-foreground">No approved templates</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Approve a template in Meta WhatsApp Manager, then sync it
-                  from Settings → Templates.
-                </p>
+              <div className="rounded-md border p-6 text-center">
+                <p>No approved templates.</p>
               </div>
             ) : (
               templates.map((t) => (
@@ -239,129 +490,241 @@ export function TemplatePicker({
                   key={t.id}
                   type="button"
                   onClick={() => pickTemplate(t)}
-                  className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-primary/40 hover:bg-popover"
+                  className="w-full rounded-md border p-3 text-left hover:border-primary"
                 >
                   <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-medium text-popover-foreground">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-medium">
                           {t.name}
                         </p>
-                        <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
+
+                        <Badge>
                           {t.category}
                         </Badge>
+
                         {t.language && (
-                          <span className="text-[10px] uppercase text-muted-foreground">
+                          <span className="text-xs text-muted-foreground uppercase">
                             {t.language}
                           </span>
                         )}
                       </div>
+
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                         {t.body_text}
                       </p>
                     </div>
-                    <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+
+                    <ChevronRight className="h-4 w-4" />
                   </div>
                 </button>
               ))
             )}
           </div>
         ) : (
-          <div className="space-y-3">
-            <div className="rounded-md border border-border bg-background/50 p-3">
-              <p className="mb-1 text-xs text-muted-foreground">Preview</p>
-              <p className="whitespace-pre-wrap text-sm text-popover-foreground">
-                {renderBodyPreview(selected.body_text, params)}
+          <div className="space-y-4">
+
+            <div className="rounded-md border p-3">
+              <p className="text-xs text-muted-foreground mb-2">
+                Preview
               </p>
+
+              <p className="whitespace-pre-wrap text-sm">
+                {renderBodyPreview(
+                  selected.body_text,
+                  params,
+                )}
+              </p>
+
               {selected.footer_text && (
                 <p className="mt-2 text-xs italic text-muted-foreground">
                   {selected.footer_text}
                 </p>
               )}
             </div>
-            {slots && slots.headerVar && (
-              <div className="space-y-1">
-                <Label className="text-xs text-popover-foreground">
-                  {`Header {{${slots.headerVar}}}`}
+
+            {requiresMedia && (
+              <div className="space-y-2">
+
+                <Label>
+                  Header Media
                 </Label>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setMediaDialogOpen(true)
+                  }
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+
+                  Upload Header Media
+                </Button>
+
+                {(headerMediaUrl ||
+                  headerMediaId) && (
+                  <div className="rounded-md border p-3">
+
+                    <div className="flex items-center gap-2">
+
+                      {selected.header_type ===
+                        "image" && (
+                        <ImageIcon className="h-4 w-4" />
+                      )}
+
+                      {selected.header_type ===
+                        "video" && (
+                        <Video className="h-4 w-4" />
+                      )}
+
+                      {selected.header_type ===
+                        "document" && (
+                        <FileText className="h-4 w-4" />
+                      )}
+
+                      <span className="text-sm text-green-600">
+                        Media uploaded successfully
+                      </span>
+
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {slots?.headerVar && (
+              <div className="space-y-1">
+                <Label>
+                  Header
+                </Label>
+
                 <Input
                   value={headerText}
-                  onChange={(e) => setHeaderText(e.target.value)}
-                  placeholder="Value for the header variable"
-                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                  onChange={(e) =>
+                    setHeaderText(
+                      e.target.value,
+                    )
+                  }
                 />
               </div>
             )}
+
             {slots?.bodyVars.map((v) => (
-              <div key={v} className="space-y-1">
-                <Label className="text-xs text-popover-foreground">{`Body {{${v}}}`}</Label>
+              <div
+                key={v}
+                className="space-y-1"
+              >
+                <Label>
+                  {`Body {{${v}}}`}
+                </Label>
+
                 <Input
                   value={params[v] ?? ""}
-                  onChange={(e) => {
+                  onChange={(e) =>
                     setParams((prev) => ({
                       ...prev,
-                      [v]: e.target.value,
-                    }));
-                  }}
-                  placeholder={`Value for {{${v}}}`}
-                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
-                />
-              </div>
-            ))}
-            {slots?.urlButtonSlots.map((slot) => (
-              <div key={slot.index} className="space-y-1">
-                <Label className="text-xs text-popover-foreground">
-                  {`URL button "${slot.text}" — value for `}{`{{${slot.urlVar}}}`}
-                </Label>
-                <Input
-                  value={buttonParams[slot.index] ?? ""}
-                  onChange={(e) =>
-                    setButtonParams((prev) => ({
-                      ...prev,
-                      [slot.index]: e.target.value,
+                      [v]:
+                        e.target.value,
                     }))
                   }
-                  placeholder="URL suffix value"
-                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
-                <p className="text-[10px] text-muted-foreground break-all">
-                  Final URL: {slot.url.replace(new RegExp(`\\{\\{${slot.urlVar}\\}\\}`, 'g'), buttonParams[slot.index] || `{{${slot.urlVar}}}`)}
-                </p>
               </div>
             ))}
+
+            {slots?.urlButtonSlots.map(
+              (slot) => (
+                <div
+                  key={slot.index}
+                  className="space-y-1"
+                >
+                  <Label>
+                    {slot.text}
+                  </Label>
+
+                  <Input
+                    value={
+                      buttonParams[
+                        slot.index
+                      ] ?? ""
+                    }
+                    onChange={(e) =>
+                      setButtonParams(
+                        (prev) => ({
+                          ...prev,
+                          [slot.index]:
+                            e.target
+                              .value,
+                        }),
+                      )
+                    }
+                  />
+                </div>
+              ),
+            )}
           </div>
         )}
 
-        <DialogFooter className="gap-2">
+        <DialogFooter>
+
           {selected ? (
             <>
               <Button
                 variant="outline"
-                onClick={resetSelection}
-                className="border-border text-popover-foreground hover:bg-muted"
+                onClick={
+                  resetSelection
+                }
               >
-                <ArrowLeft className="h-4 w-4" />
+                <ArrowLeft className="mr-2 h-4 w-4" />
                 Back
               </Button>
+
               <Button
                 disabled={!canConfirm}
                 onClick={confirm}
-                className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
-                Send template
+                Send Template
               </Button>
             </>
           ) : (
             <Button
               variant="outline"
-              onClick={() => handleOpenChange(false)}
-              className="border-border text-popover-foreground hover:bg-muted"
+              onClick={() =>
+                handleOpenChange(false)
+              }
             >
               Cancel
             </Button>
           )}
+
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+
+    {selected &&
+      requiresMedia && (
+        <MediaUploadDialog
+          open={mediaDialogOpen}
+          mediaType={
+            selected.header_type as
+              | "image"
+              | "video"
+              | "document"
+          }
+          onOpenChange={
+            setMediaDialogOpen
+          }
+          onUploadToStorage={
+            handleUploadToStorage
+          }
+          onUploadToMeta={
+            handleUploadToMeta
+          }
+          onComplete={
+            handleMediaComplete
+          }
+        />
+      )}
+  </>
+);
 }
