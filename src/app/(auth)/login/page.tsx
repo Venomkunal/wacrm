@@ -75,7 +75,7 @@ function LoginPageInner() {
               <UsersRound className="h-6 w-6 text-primary" />
             ) : (
               <img 
-                          src="/logo.svg" 
+                          src="/logo.png" 
                                       alt="Shinelink Logo" 
                                                   className="h-5 w-5 object-contain"
                                                             />

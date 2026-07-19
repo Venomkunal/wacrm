@@ -44,12 +44,15 @@ export function useRealtime({
 
     const supabase = createClient();
 
+    console.log("[Realtime] Creating channel:", channelName);
+
     const channel = supabase
       .channel(channelName)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "messages" },
         (payload) => {
+          console.log("[Realtime] Message payload:", payload);
           onMessageRef.current?.({
             eventType: payload.eventType as RealtimeEvent<Message>["eventType"],
             new: payload.new as Message,
@@ -61,6 +64,7 @@ export function useRealtime({
         "postgres_changes",
         { event: "*", schema: "public", table: "conversations" },
         (payload) => {
+          console.log("[Realtime] Conversation payload:", payload);
           onConversationRef.current?.({
             eventType: payload.eventType as RealtimeEvent<Conversation>["eventType"],
             new: payload.new as Conversation,
@@ -69,12 +73,14 @@ export function useRealtime({
         }
       )
       .subscribe((status) => {
+        console.log("[Realtime] Status:", status);
         setIsConnected(status === "SUBSCRIBED");
       });
 
     channelRef.current = channel;
 
     return () => {
+      console.log("[Realtime] Removing channel:", channelName);
       supabase.removeChannel(channel);
       channelRef.current = null;
       setIsConnected(false);
